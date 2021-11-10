@@ -29,7 +29,7 @@ endif()
 if(MSVC)
     add_definitions(/bigobj) # Allow big object
     add_definitions(-DWIN)
-    target_link_libraries(${APP_NAME} -lws2_32)
+    find_package(ws2_32)
 elseif(MINGW)
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wa,-mbig-obj") # Allow big object
 endif()
@@ -116,6 +116,9 @@ add_executable(${APP_NAME} ${SYSTEM_FLAGS} ${ICONS_SRC} ${EXAMPLES_SRC} ${LAYOUT
 target_link_libraries(${APP_NAME} Qt5::Core Qt5::Widgets)
 # Link Ripes library
 target_link_libraries(${APP_NAME} ${RIPES_LIB})
+if(MSVC)
+    target_link_libraries(${APP_NAME} ws2_32)
+endif()
 
 
 if(UNIX AND NOT APPLE) #Define the LINUX variable before testing it
