@@ -114,9 +114,9 @@ add_executable(${APP_NAME} ${SYSTEM_FLAGS} ${ICONS_SRC} ${EXAMPLES_SRC} ${LAYOUT
 target_link_libraries(${APP_NAME} Qt5::Core Qt5::Widgets)
 # Link Ripes library
 target_link_libraries(${APP_NAME} ${RIPES_LIB})
-#if(MSVC)
-#    target_link_libraries(${APP_NAME} ws2_32)
-#endif()
+if(MSVC)
+    target_link_libraries(${APP_NAME} ws2_32)
+endif()
 
 
 if(UNIX AND NOT APPLE) #Define the LINUX variable before testing it
