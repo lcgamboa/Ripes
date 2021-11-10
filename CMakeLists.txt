@@ -115,6 +115,11 @@ target_link_libraries(${APP_NAME} Qt5::Core Qt5::Widgets)
 # Link Ripes library
 target_link_libraries(${APP_NAME} ${RIPES_LIB})
 
+if(${WIN32})
+add_definitions(-DWIN)
+target_link_libraries(TcpServer ws2_32)
+endif()
+
 if(UNIX AND NOT APPLE) #Define the LINUX variable before testing it
     set(LINUX TRUE)
 endif()
