@@ -28,6 +28,9 @@ endif()
 
 if(MSVC)
     add_definitions(/bigobj) # Allow big object
+    add_definitions(-DWIN)
+    target_link_libraries(${APP_NAME} ws2_32)
+endif()
 elseif(MINGW)
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wa,-mbig-obj") # Allow big object
 endif()
@@ -115,10 +118,6 @@ target_link_libraries(${APP_NAME} Qt5::Core Qt5::Widgets)
 # Link Ripes library
 target_link_libraries(${APP_NAME} ${RIPES_LIB})
 
-if(${WIN32})
-add_definitions(-DWIN)
-target_link_libraries(${APP_NAME} ws2_32)
-endif()
 
 if(UNIX AND NOT APPLE) #Define the LINUX variable before testing it
     set(LINUX TRUE)
