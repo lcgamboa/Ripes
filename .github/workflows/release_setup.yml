@@ -11,9 +11,9 @@ jobs:
     steps:
 
     - uses: "marvinpinto/action-automatic-releases@latest"
-      if: github.ref == 'refs/heads/master'
+      if: github.ref == 'refs/heads/external_io_tcp_server'
       with:
         repo_token: "${{ secrets.GITHUB_TOKEN }}"
-        automatic_release_tag: "continuous"
+        automatic_release_tag: "continuous no master"
         prerelease: true
-        title: "Continuous release"
+        title: "Continuous no master release"
