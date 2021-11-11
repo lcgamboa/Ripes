@@ -66,11 +66,11 @@ jobs:
 
     - name: continuous release
       uses: softprops/action-gh-release@v1
-      if: github.ref == 'refs/heads/master' && matrix.build-type == 'Release'
+      if: github.ref == 'refs/heads/external_io_tcp_server' && matrix.build-type == 'Release'
       with:
         prerelease: true
         files: ${{ env.APPNAME }}
-        tag_name: continuous
+        tag_name: continuoustest
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
