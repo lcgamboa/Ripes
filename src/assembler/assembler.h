@@ -82,7 +82,8 @@ public:
     AssemblerTypes(Reg_T);
     Assembler(const ISAInfoBase* isa) : m_isa(isa) {}
 
-    AssembleResult assemble(const QStringList& programLines, const SymbolMap* symbols = nullptr) const override {
+    AssembleResult assemble(const QStringList& programLines, const SymbolMap* symbols = nullptr,
+                            QString sourceHash = QString()) const override {
         AssembleResult result;
 
         /// by default, emit to .text until otherwise specified
@@ -109,6 +110,7 @@ public:
         Q_UNUSED(unused);
 
         result.program = program;
+        result.program.sourceHash = sourceHash;
         result.program.entryPoint = m_sectionBasePointers.at(".text");
         return result;
     }
@@ -368,6 +370,7 @@ protected:
                 std::shared_ptr<_Instruction> assembledWith;
                 runOperation(machineCode, _InstrRes, assembleInstruction, line, assembledWith);
                 assert(assembledWith && "Expected the assembler instruction to be set");
+                program.sourceMapping[addr_offset].insert(line.sourceLine);
 
                 if (!machineCode.linksWithSymbol.symbol.isEmpty()) {
                     LinkRequest req;
@@ -380,11 +383,11 @@ protected:
 
                 /// Check if we're now misaligned wrt. the size of the instruction. Instructions should always be
                 /// emitted on an aligned boundary wrt. their size.
-                unsigned alignmentDiff = addr_offset % assembledWith->size();
+                const unsigned alignmentDiff = addr_offset % (m_isa->instrByteAlignment());
                 if (alignmentDiff != 0) {
                     errors.push_back({line.sourceLine, "Instruction misaligned (" + QString::number(alignmentDiff * 8) +
                                                            "-bit boundary). This instruction must be aligned on a " +
-                                                           QString::number(assembledWith->size() * 8) +
+                                                           QString::number((m_isa->instrByteAlignment()) * 8) +
                                                            "-bit boundary."});
                     break;
                 }

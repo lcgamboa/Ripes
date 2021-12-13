@@ -33,6 +33,11 @@
 
 namespace Ripes {
 
+static void clearSaveFile() {
+    RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, false);
+    RipesSettings::setValue(RIPES_SETTING_SAVEPATH, "");
+}
+
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), m_ui(new Ui::MainWindow) {
     m_ui->setupUi(this);
     setWindowTitle("Ripes");
@@ -95,7 +100,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), m_ui(new Ui::Main
     setupMenus();
 
     // setup and connect widgets
-    connect(editTab, &EditTab::editorStateChanged, [=] { RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, false); });
+    connect(editTab, &EditTab::editorStateChanged, [=] { clearSaveFile(); });
 
     // Setup status bar
     setupStatusBar();
@@ -113,6 +118,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), m_ui(new Ui::Main
 
     connect(cacheTab, &CacheTab::focusAddressChanged, memoryTab, &MemoryTab::setCentralAddress);
 
+    connect(this, &MainWindow::prepareSave, editTab, &EditTab::onSave);
+
     m_currentTabID = ProcessorTabID;
     m_ui->tabbar->setActiveIndex(m_currentTabID);
 }
@@ -123,7 +130,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), m_ui(new Ui::Main
     connect(&name##StatusManager::get().emitter, &StatusEmitter::statusChanged, name##StatusLabel, &QLabel::setText); \
     connect(&name##StatusManager::get().emitter, &StatusEmitter::clear, name##StatusLabel, &QLabel::clear);
 
-#define setupPermanentStatusWidget(name) _setupStatusWidget(name, Permanent)
+#define setupPermanentStatusWidget(name) \
+    _setupStatusWidget(name, Permanent); \
+    name##StatusManager::get().setPermanent();
 
 #define setupStatusWidget(name) _setupStatusWidget(name, )
 
@@ -136,7 +145,7 @@ void MainWindow::setupStatusBar() {
         const auto& desc = ProcessorRegistry::getDescription(ProcessorHandler::getID());
         QString status =
             "Processor: " + desc.name + "    ISA: " + ProcessorHandler::getProcessor()->implementsISA()->name();
-        ProcessorInfoStatusManager::get().setStatus(status);
+        ProcessorInfoStatusManager::get().setStatusPermanent(status);
     };
     connect(ProcessorHandler::get(), &ProcessorHandler::processorChanged, updateProcessorInfo);
     updateProcessorInfo();
@@ -229,7 +238,7 @@ void MainWindow::setupExamplesMenu(QMenu* parent) {
                 parms.filepath = QString(":/examples/assembly/") + fileName;
                 parms.type = SourceType::Assembly;
                 static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->loadExternalFile(parms);
-                RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, false);
+                clearSaveFile();
             });
         }
     }
@@ -243,7 +252,7 @@ void MainWindow::setupExamplesMenu(QMenu* parent) {
                 parms.filepath = QString(":/examples/C/") + fileName;
                 parms.type = SourceType::C;
                 static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->loadExternalFile(parms);
-                RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, false);
+                clearSaveFile();
             });
         }
     }
@@ -265,7 +274,7 @@ void MainWindow::setupExamplesMenu(QMenu* parent) {
                 parms.filepath = tmpELFFile->fileName();
                 parms.type = SourceType::ExternalELF;
                 static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->loadExternalFile(parms);
-                RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, false);
+                clearSaveFile();
                 tmpELFFile->remove();
             });
         }
@@ -301,8 +310,13 @@ void MainWindow::loadFileTriggered() {
     if (!diag.exec())
         return;
 
-    static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->loadExternalFile(diag.getParams());
-    RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, false);
+    if (static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->loadExternalFile(diag.getParams())) {
+        // Set the current save path to the loaded file. Only store the file basename without extension.
+        QFileInfo info = QFileInfo(diag.getParams().filepath);
+        auto savePath = info.dir().path() + QDir::separator() + info.baseName();
+        RipesSettings::setValue(RIPES_SETTING_SAVEPATH, savePath);
+        RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, true);
+    }
 }
 
 void MainWindow::wiki() {
@@ -331,18 +345,20 @@ static void writeBinaryFile(QFile& file, const QByteArray& data) {
 }
 
 void MainWindow::saveFilesTriggered() {
-    SaveDialog diag;
+    SaveDialog diag(static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->getSourceType());
     if (!RipesSettings::value(RIPES_SETTING_HAS_SAVEFILE).toBool()) {
         saveFilesAsTriggered();
         return;
     }
 
+    emit prepareSave();
+
     bool didSave = false;
     QStringList savedFiles;
 
-    if (!diag.assemblyPath().isEmpty()) {
-        QFile file(diag.assemblyPath());
-        savedFiles << diag.assemblyPath();
+    if (!diag.sourcePath().isEmpty()) {
+        QFile file(diag.sourcePath());
+        savedFiles << diag.sourcePath();
         writeTextFile(file, static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->getAssemblyText());
         didSave |= true;
     }
@@ -358,12 +374,12 @@ void MainWindow::saveFilesTriggered() {
     }
 
     if (didSave) {
-        GeneralStatusManager::setStatusTimed("Saved files " + savedFiles.join(", "), 2000);
+        GeneralStatusManager::setStatusTimed("Saved files " + savedFiles.join(", "), 1000);
     }
 }
 
 void MainWindow::saveFilesAsTriggered() {
-    SaveDialog diag;
+    SaveDialog diag(static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->getSourceType());
     auto ret = diag.exec();
     if (ret == QDialog::Rejected) {
         return;
@@ -403,7 +419,7 @@ void MainWindow::newProgramTriggered() {
             }
         }
     }
-    RipesSettings::setValue(RIPES_SETTING_HAS_SAVEFILE, false);
+    clearSaveFile();
     static_cast<EditTab*>(m_tabWidgets.at(EditTabID).tab)->newProgram();
 }
 

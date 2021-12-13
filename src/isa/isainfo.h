@@ -3,6 +3,7 @@
 #include <QMap>
 #include <QSet>
 #include <QString>
+#include <memory>
 #include <set>
 
 #include "elfio/elf_types.hpp"
@@ -47,6 +48,7 @@ public:
     unsigned bytes() const { return bits() / CHAR_BIT; }            // Register width, in bytes
     virtual unsigned instrBits() const = 0;                         // Instruction width, in bits
     unsigned instrBytes() const { return instrBits() / CHAR_BIT; }  // Instruction width, in bytes
+    virtual unsigned instrByteAlignment() const { return 0; }       // Instruction Alignment, in bytes
     virtual int spReg() const { return -1; }                        // Stack pointer
     virtual int gpReg() const { return -1; }                        // Global pointer
     virtual int syscallReg() const { return -1; }                   // Syscall function register
@@ -74,6 +76,7 @@ public:
     virtual const QStringList& enabledExtensions() const = 0;
     bool extensionEnabled(const QString& ext) const { return enabledExtensions().contains(ext); }
     bool supportsExtension(const QString& ext) const { return supportedExtensions().contains(ext); }
+    virtual QString extensionDescription(const QString& ext) const = 0;
 
     /**
      * ISA equality is defined as a separate function rather than the == operator, given that we might need to check for
@@ -88,6 +91,13 @@ public:
 
 protected:
     ISAInfoBase() {}
+};
+
+// Shallow ISA info used to drive ISA construction and UI representation.
+struct ProcessorISAInfo {
+    std::shared_ptr<ISAInfoBase> isa;
+    QStringList supportedExtensions;
+    QStringList defaultExtensions;
 };
 
 template <ISA isa>

@@ -17,19 +17,23 @@
 #include "colors.h"
 #include "csyntaxhighlighter.h"
 #include "fonts.h"
+#include "formattermanager.h"
 #include "processorhandler.h"
 #include "ripessettings.h"
 #include "rvsyntaxhighlighter.h"
+#include "statusmanager.h"
 #include "syntaxhighlighter.h"
 
 namespace Ripes {
 
-CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
+CodeEditor::CodeEditor(QWidget* parent) : HighlightableTextEdit(parent) {
     m_lineNumberArea = new LineNumberArea(this);
 
     connect(this, &QPlainTextEdit::blockCountChanged, this, &CodeEditor::updateSidebarWidth);
     connect(this, &QPlainTextEdit::updateRequest, this, &CodeEditor::updateSidebar);
     updateSidebarWidth(0);
+
+    connect(ProcessorHandler::get(), &ProcessorHandler::procStateChangedNonRun, this, &CodeEditor::updateHighlighting);
 
     // Set font for the entire widget. calls to fontMetrics() will get the
     // dimensions of the currently set font
@@ -46,6 +50,86 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
 
     setWordWrapMode(QTextOption::NoWrap);
     setupChangedTimer();
+}
+
+struct ClangFormatResult {
+    // remapped cursor position. see clang-format --cursor for more info.
+    unsigned cursor;
+    QString formattedText;
+};
+
+static std::optional<ClangFormatResult> parseClangFormatOutput(const QString& cfOutput) {
+    // The first line should contain a JSON formatted array detailing the remapped cursor position and formatting
+    // status. If this is not the case, the clang-format version might be outdated or something else went wrong.
+    unsigned firstNewline = cfOutput.indexOf('\n');
+    auto firstLine = cfOutput.left(firstNewline);
+    auto rest = cfOutput.mid(firstNewline + 1);
+    auto jsonHeader = QJsonDocument::fromJson(firstLine.toUtf8());
+    if (jsonHeader.isNull())
+        return std::nullopt;
+
+    if (!jsonHeader.object().contains("Cursor"))
+        return std::nullopt;
+
+    ClangFormatResult res;
+    res.cursor = jsonHeader["Cursor"].toInt();
+    res.formattedText = rest;
+    return res;
+}
+
+void CodeEditor::onSave() {
+    // run the formatter, if applicable.
+
+    if (m_sourceType != SourceType::C)
+        return;
+
+    if (!RipesSettings::value(RIPES_SETTING_FORMAT_ON_SAVE).toBool())
+        return;
+
+    if (!FormatterManager::hasValidProgram())
+        return;
+
+    // We want to execute the formatter in the savefile's directory to adhere to any formatting config files.
+    auto savePath = RipesSettings::value(RIPES_SETTING_SAVEPATH).toString();
+    if (savePath.isEmpty())
+        return;
+
+    auto tmpDir = QFileInfo(savePath).dir();
+    const auto tempFileTemplate =
+        QString(tmpDir.path() + QDir::separator() + QCoreApplication::applicationName() + ".XXXXXX.c");
+    QTemporaryFile tmpSrc(tempFileTemplate);
+    tmpSrc.setAutoRemove(true);
+    if (tmpSrc.open()) {
+        tmpSrc.write(this->document()->toPlainText().toUtf8());
+        tmpSrc.close();
+        // Feed the current program to the formatter as stdin
+        QStringList clangFormatArgs;
+        // Track cursor changes
+        clangFormatArgs << "--cursor=" + QString::number(this->textCursor().position());
+        // Temporary file to apply format changes to
+        clangFormatArgs << tmpSrc.fileName();
+        auto [stdOut, stdErr] = FormatterManager::run(clangFormatArgs);
+        if (!stdErr.isEmpty()) {
+            QMessageBox::warning(this, "Ripes",
+                                 "Error while executing formatter. Make sure the formatter path points to a "
+                                 "valid version of clang-format\n"
+                                 "Error message was:\n" +
+                                     stdErr,
+                                 QMessageBox::Ok);
+            return;
+        }
+
+        if (!stdOut.isEmpty()) {
+            auto cfOutput = parseClangFormatOutput(stdOut);
+            if (!cfOutput)
+                return;
+            QTextCursor curs(this->document());
+            curs.select(QTextCursor::Document);
+            curs.insertText(cfOutput->formattedText);
+            curs.setPosition(cfOutput->cursor);
+            this->setTextCursor(curs);
+        }
+    }
 }
 
 void CodeEditor::setupChangedTimer() {
@@ -305,6 +389,57 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent* event) {
         top = bottom;
         bottom = top + static_cast<int>(blockBoundingRect(block).height());
         ++blockNumber;
+    }
+}
+
+void CodeEditor::updateHighlighting() {
+    clearBlockHighlights();
+
+    if (!RipesSettings::value(RIPES_SETTING_EDITORSTAGEHIGHLIGHTING).toBool())
+        return;
+
+    auto* proc = ProcessorHandler::getProcessor();
+    auto program = ProcessorHandler::getProgram().get();
+
+    // Is the current source in sync with the in-memory source?
+    if (!program || !program->isSameSource(document()->toPlainText().toUtf8()))
+        return;
+
+    auto sourceMapping = program->sourceMapping;
+
+    // Do nothing if no soruce mappings are available.
+    if (sourceMapping.empty())
+        return;
+
+    // Iterate over the processor stages and use the source mappings to determine the source line which originated the
+    // instruction.
+    const unsigned stages = proc->stageCount();
+    auto colorGenerator = Colors::incrementalRedGenerator(stages);
+    QList<QTextEdit::ExtraSelection> highlights;
+
+    for (unsigned sid = 0; sid < stages; sid++) {
+        const auto stageInfo = proc->stageInfo(sid);
+        QColor stageColor = colorGenerator();
+        if (stageInfo.stage_valid) {
+            auto mappingIt = sourceMapping.find(stageInfo.pc);
+            if (mappingIt == sourceMapping.end()) {
+                // No source line registerred for this PC.
+                continue;
+            }
+
+            for (auto sourceLine : mappingIt->second) {
+                // Find block
+                QTextBlock block = document()->findBlockByLineNumber(sourceLine);
+                if (!block.isValid())
+                    continue;
+
+                // Record the stage name for the highlighted block for later painting
+                QString stageString = ProcessorHandler::getProcessor()->stageName(sid);
+                if (!stageInfo.namedState.isEmpty())
+                    stageString += " (" + stageInfo.namedState + ")";
+                highlightBlock(block, stageColor, stageString);
+            }
+        }
     }
 }
 

@@ -18,7 +18,7 @@ For bugs or issues, please report these at the [issues page](https://github.com/
 
 ## Usage
 Ripes may be used to explore concepts such as:
-- How machine code is executed on a variety of microarchitectures (RV32IM/RV64IM based)
+- How machine code is executed on a variety of microarchitectures (RV32IMC/RV64IMC based)
 - How different cache designs influence performance
 - How C and assembly code is compiled and assembled to executable machine code
 - How a processor interacts with memory-mapped I/O
@@ -62,11 +62,3 @@ In papers and reports, please refer to Ripes as follows: 'Morten Borup Petersen.
 	howpublished = "\url{https://github.com/mortbopet/Ripes}"
 }
 ```
-
-
-
-Icons kindly provided by Flaticon authors: [Smashicons](https://www.flaticon.com/authors/smashicons), [Freepik](https://www.flaticon.com/authors/freepik), [Vectors Market](https://www.flaticon.com/authors/vectors-market) & [Pixel Buddha](https://www.flaticon.com/authors/pixel-buddha).
-
-<a href="https://www.qt.io/">
-    <img src="https://github.com/mortbopet/Ripes/blob/master/resources/images/QtIcon.png" width="60" height="60" />
-</a>

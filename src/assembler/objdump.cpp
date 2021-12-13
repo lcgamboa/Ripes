@@ -28,8 +28,10 @@ QString stringifyProgram(std::weak_ptr<const Program> program, Stringifier strin
         auto dataStream = QDataStream(textSection->data);
         std::vector<char> buffer;
         const unsigned regBytes = ProcessorHandler::currentISA()->bytes();
+        const unsigned instrBytes = ProcessorHandler::currentISA()->instrBytes();
 
         int infoOffsets = 0;
+        const QString indent = "    ";
 
         AInt addr = textSection->address;
         while (addr < textSection->address + textSection->data.length()) {
@@ -54,10 +56,18 @@ QString stringifyProgram(std::weak_ptr<const Program> program, Stringifier strin
             }
 
             // Instruction address
-            out += "\t" + QString::number(addr, 16) + ":\t\t";
+            out += indent + QString::number(addr, 16) + ":" + indent + indent;
 
             // Stringified instruction
             auto disres = stringifier(buffer, addr);
+            if (disres.err.has_value()) {
+                // Error during disassembled; we'll just have to increment the address counter by the default
+                // instruction size of the ISA. std::min with buffer size in the edge case that we're erroring on a
+                // single instruction which is smaller than the default instruction width.
+                addr += std::min(static_cast<unsigned>(buffer.size()), instrBytes);
+            } else
+                addr += disres.bytesDisassembled;
+            assert(buffer.size() >= disres.bytesDisassembled);
 
             // Instruction word
             QString wordString;
@@ -66,9 +76,18 @@ QString stringifyProgram(std::weak_ptr<const Program> program, Stringifier strin
                 wordString.prepend(QString().setNum(static_cast<uint8_t>(*it), 16).rightJustified(2, '0'));
                 buffer.erase(it);
             }
-            out += wordString + "\t\t";
+
+            out += wordString + indent + indent;
+
+            // Pad if < default instruction width to align disassembled instruction with default instruction width
+            // column
+            int dBytes = instrBytes - disres.bytesDisassembled;
+            while (dBytes > 0) {
+                out += indent;
+                dBytes -= indent.size() / 2;
+            }
+
             out += disres.repr + "\n";
-            addr += disres.bytesDisassembled;
         }
         return out;
     }
@@ -95,15 +114,18 @@ QString binobjdump(const std::shared_ptr<const Program>& program, AddrOffsetMap&
     const unsigned instrBytes = ProcessorHandler::currentISA()->instrBytes();
     return stringifyProgram(
         program,
-        [&](const std::vector<char>& buffer, AInt) {
-            OpDisassembleResult disres;
-            QString binaryString;
-            assert(buffer.size() >= instrBytes);
-            for (size_t i = 0; i < instrBytes; ++i) {
-                disres.repr.prepend(QString().setNum(static_cast<uint8_t>(buffer[i]), 2).rightJustified(8, '0'));
+        [&program, &assembler, instrBytes](const std::vector<char>& buffer, AInt address) {
+            /// Use disassembler to determine # of bytes disassembled, and then emit the byte representation.
+            VInt instr = 0;
+            for (unsigned i = 0; i < instrBytes; ++i) {
+                instr |= (buffer[i] & 0xFF) << (CHAR_BIT * i);
             }
-            disres.bytesDisassembled = instrBytes;
-            return disres;
+            auto disRes = assembler->disassemble(instr, program->symbols, address);
+            disRes.repr.clear();
+            for (size_t i = 0; i < disRes.bytesDisassembled; ++i) {
+                disRes.repr.prepend(QString().setNum(static_cast<uint8_t>(buffer[i]), 2).rightJustified(8, '0'));
+            }
+            return disRes;
         },
         addrOffsetMap);
 }

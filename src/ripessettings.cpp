@@ -12,7 +12,10 @@ const std::map<QString, QVariant> s_defaultSettings = {
     // User-modifyable settings
     {RIPES_SETTING_REWINDSTACKSIZE, 100},
     {RIPES_SETTING_CCPATH, ""},
-    {RIPES_SETTING_CCARGS, "-O0"},
+    {RIPES_SETTING_FORMATTER_PATH, "clang-format"},
+    {RIPES_SETTING_FORMAT_ON_SAVE, false},
+    {RIPES_SETTING_FORMATTER_ARGS, "--style=file --fallback-style=LLVM"},
+    {RIPES_SETTING_CCARGS, "-O0 -g"},
     {RIPES_SETTING_LDARGS, "-static -lm"},  // Ensure statically linked executable + link with math library
     {RIPES_SETTING_CONSOLEECHO, "true"},
     {RIPES_SETTING_CONSOLEBG, QColorConstants::White},
@@ -28,6 +31,7 @@ const std::map<QString, QVariant> s_defaultSettings = {
     {RIPES_SETTING_PERIPHERALS_START, static_cast<unsigned>(0xF0000000)},
     {RIPES_SETTING_EDITORREGS, true},
     {RIPES_SETTING_EDITORCONSOLE, true},
+    {RIPES_SETTING_EDITORSTAGEHIGHLIGHTING, true},
 
     {RIPES_SETTING_PIPEDIAGRAM_MAXCYCLES, 100},
     {RIPES_SETTING_CACHE_MAXCYCLES, 10000},
@@ -59,7 +63,7 @@ const std::map<QString, QVariant> s_defaultSettings = {
 
     {RIPES_SETTING_HAS_SAVEFILE, false},
     {RIPES_SETTING_SAVEPATH, ""},
-    {RIPES_SETTING_SAVE_ASSEMBLY, true},
+    {RIPES_SETTING_SAVE_SOURCE, true},
     {RIPES_SETTING_SAVE_BINARY, false}};
 
 void SettingObserver::setValue(const QVariant& v) {
@@ -72,12 +76,6 @@ void SettingObserver::setValue(const QVariant& v) {
 
 void SettingObserver::trigger() {
     setValue(value());
-}
-
-QVariant SettingObserver::value() const {
-    QSettings settings;
-    Q_ASSERT(settings.contains(m_key));
-    return settings.value(m_key);
 }
 
 RipesSettings::~RipesSettings() {}
@@ -112,10 +110,6 @@ SettingObserver* RipesSettings::getObserver(const QString& key) {
 
 void RipesSettings::setValue(const QString& key, const QVariant& value) {
     get().m_observers.at(key).setValue(value);
-}
-
-QVariant RipesSettings::value(const QString& key) {
-    return get().m_observers.at(key).value();
 }
 
 }  // namespace Ripes
