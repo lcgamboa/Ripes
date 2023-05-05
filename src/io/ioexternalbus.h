@@ -3,11 +3,12 @@
 #include <QMutex>
 #include <QPen>
 #include <QVariant>
+#include <QtNetwork>
+
 
 #include "iobase.h"
 
 #include "VBus.h"
-#include "XTcpSocket.h"
 
 namespace Ripes {
 
@@ -44,6 +45,11 @@ public:
   virtual VInt ioRead(AInt offset, unsigned size) override;
   virtual void ioWrite(AInt offset, VInt value, unsigned size) override;
 
+public slots:
+   void SlotWrite(const QByteArray Data);
+   void SlotClose(void);
+   void SlotRead(void);
+    
 protected:
   virtual void parameterChanged(unsigned) override{/* no parameters */};
 
@@ -65,7 +71,13 @@ private:
   std::vector<RegDesc> m_regDescs;
   std::vector<IOSymbol> m_extraSymbols;
 
-  std::unique_ptr<XTcpSocket> tcpSocket = nullptr;
-  QMutex skt_use;
+  std::unique_ptr<QTcpSocket> tcpSocket = nullptr;
+  QRecursiveMutex  skt_use;
+  QByteArray ReceivedData;
+
+  signals:
+    void SigWrite(const QByteArray Data);
+    void SigClose(void);
+    void SigReadEnd(void);
 };
 } // namespace Ripes

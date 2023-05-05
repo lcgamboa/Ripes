@@ -72,5 +72,6 @@ target_link_libraries(${RIPES_LIB} PUBLIC
     fancytabbar_lib
     ${VSRTL_GRAPHICS_LIB}
     Qt6::Charts
+    Qt6::Network
     dwarf++)
 

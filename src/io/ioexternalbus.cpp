@@ -26,17 +26,22 @@ static uint64_t simtime = 0; // FIXME use instruction counter
 
 IOExternalBus::IOExternalBus(QWidget *parent)
     : IOBase(IOType::EXTERNALBUS, parent), m_ui(new Ui::IOExternalBus),
-      tcpSocket(new XTcpSocket()) {
+      tcpSocket(new QTcpSocket()) {
   m_ByteSize = 0x46;
   m_ui->setupUi(this);
   connect(m_ui->connectButton, &QPushButton::clicked, this,
           &IOExternalBus::connectButtonTriggered);
+
+  connect(this, SIGNAL(SigWrite(const QByteArray)), this,
+          SLOT(SlotWrite(const QByteArray)),Qt::QueuedConnection );
+  connect(this, SIGNAL(SigClose(void)), this, SLOT(SlotClose(void)),Qt::QueuedConnection);
+  connect(tcpSocket.get(), SIGNAL(readyRead(void)), this, SLOT(SlotRead(void)),Qt::QueuedConnection);
 }
 
 IOExternalBus::~IOExternalBus() {
   unregister();
   delete m_ui;
-};
+}
 
 unsigned IOExternalBus::byteSize() const { return m_ByteSize; }
 
@@ -47,12 +52,45 @@ QString IOExternalBus::description() const {
          "the Ripes wiki.";
 }
 
+void IOExternalBus::SlotWrite(const QByteArray Data) {
+
+  VBUS::CmdHeader * cmd_header = (VBUS::CmdHeader * )Data.data();
+
+  qDebug() << "threadID WR=" << QThread::currentThread()<< " simtime= " << ntohll(cmd_header->time)<< "global = "<<simtime;
+
+  if ((tcpSocket->write(Data)) < 0) {
+    disconnectOnError();
+  }
+}
+
+void IOExternalBus::SlotRead(void) {
+
+  ReceivedData.append(tcpSocket->readAll());
+
+   VBUS::CmdHeader * cmd_header = (VBUS::CmdHeader * )ReceivedData.data();
+  qDebug() << "threadID RD=" << QThread::currentThread()<< " simtime= " << ntohll(cmd_header->time)<< "global = "<<simtime;
+
+  emit SigReadEnd();
+}
+
+void IOExternalBus::SlotClose(void) {
+
+      
+      QMessageBox::information(nullptr, tr("Ripes VBus"), tcpSocket->errorString());
+      
+    qDebug() <<  tcpSocket->errorString();
+
+  tcpSocket->close();
+  tcpSocket->abort();
+}
+
 VInt IOExternalBus::ioRead(AInt offset, unsigned size) {
   uint32_t rvalue = 0;
 
   if (tcpSocket->isOpen()) {
-    simtime += 100000000L;
     QMutexLocker locker(&skt_use);
+    ReceivedData.clear();
+    simtime += 100000000L;
     uint32_t payload = htonl(offset);
     QByteArray dp = QByteArray(reinterpret_cast<const char *>(&payload), 4);
     if (send_cmd(VBUS::VB_PREAD, dp.size(), dp, simtime) < 0) {
@@ -85,8 +123,9 @@ VInt IOExternalBus::ioRead(AInt offset, unsigned size) {
 
 void IOExternalBus::ioWrite(AInt offset, VInt value, unsigned size) {
   if (tcpSocket->isOpen()) {
-    simtime += 100000000L;
     QMutexLocker locker(&skt_use);
+    ReceivedData.clear();
+    simtime += 100000000L;
     uint32_t payload[2];
     payload[0] = htonl(offset);
     payload[1] = htonl(value);
@@ -110,7 +149,10 @@ void IOExternalBus::ioWrite(AInt offset, VInt value, unsigned size) {
 void IOExternalBus::connectButtonTriggered() {
   if (!m_Connected) {
     tcpSocket->abort();
-    if (tcpSocket->connectToHost(m_ui->address->text(), m_ui->port->value())) {
+    QMutexLocker locker(&skt_use);
+
+    tcpSocket->connectToHost(m_ui->address->text(), m_ui->port->value());
+    if (tcpSocket->waitForConnected(1000)) {
       if (send_cmd(VBUS::VB_PINFO, 0, {}, simtime) < 0) {
         return;
       }
@@ -182,7 +224,7 @@ void IOExternalBus::updateConnectionStatus(bool connected, QString Server) {
 int32_t IOExternalBus::send_cmd(const uint32_t cmd, const uint32_t payload_size,
                                 const QByteArray &payload,
                                 const uint64_t time) {
-  int32_t ret = -1;
+  int32_t ret = 0;
   VBUS::CmdHeader cmd_header;
 
   cmd_header.msg_type = htonl(cmd);
@@ -196,53 +238,89 @@ int32_t IOExternalBus::send_cmd(const uint32_t cmd, const uint32_t payload_size,
     dp.append(payload);
   }
 
-  if ((ret = tcpSocket->write(dp, dp.size())) < 0) {
-    disconnectOnError();
-  }
+  qDebug() << "threadID=" << QThread::currentThread()<< " simtime= " << time;
+
+  emit SigWrite(dp);
+
+  //QCoreApplication::processEvents();
 
   return ret;
 }
 
 int32_t IOExternalBus::recv_cmd(VBUS::CmdHeader &cmd_header) {
-  QByteArray dp = QByteArray(reinterpret_cast<char *>(&cmd_header),
-                             sizeof(VBUS::CmdHeader));
-  int ret = tcpSocket->read(dp, sizeof(VBUS::CmdHeader));
-  if (ret < 0) {
-    disconnectOnError();
+
+  int ret = 0;
+  int size = sizeof(VBUS::CmdHeader);
+  
+  
+  QTimer timer;
+  timer.setSingleShot(true);
+  QEventLoop loop;
+
+  connect(this, SIGNAL(SigReadEnd()),&loop, SLOT(quit()));
+  connect(&timer, SIGNAL(timeout()), &loop, SLOT(quit()));
+
+  while (ret < size) {
+    timer.start(10000);
+    loop.exec(QEventLoop::ExcludeUserInputEvents| QEventLoop::ExcludeSocketNotifiers);
+
+    if (timer.isActive()) {
+        ret = ReceivedData.size();
+      } else{
+        break;
+      }
+  }
+  
+  
+    if (ret < size) {
+      disconnectOnError();
+      ret = -1;
+    } else {
+      
+      
+      char * cmdp = reinterpret_cast<char *>(&cmd_header);
+    
+      memcpy(cmdp, ReceivedData.data(), size);
+
+      ReceivedData.remove(0,size);
+
+    }
+
+
+    cmd_header.msg_type = ntohl(cmd_header.msg_type);
+    cmd_header.payload_size = ntohl(cmd_header.payload_size);
+    cmd_header.time = ntohll(cmd_header.time);
+
     return ret;
   }
 
-  VBUS::CmdHeader *hr = reinterpret_cast<VBUS::CmdHeader *>(dp.data());
+  int32_t IOExternalBus::recv_payload(QByteArray & buff,
+                                      const uint32_t payload_size) {
+    
+     int ret =-1;
 
-  cmd_header.msg_type = ntohl(hr->msg_type);
-  cmd_header.payload_size = ntohl(hr->payload_size);
-  cmd_header.time = ntohll(cmd_header.time);
+    if (ReceivedData.size() < payload_size) {
+      disconnectOnError();
+    }
+    else{
 
-  return ret;
-}
-
-int32_t IOExternalBus::recv_payload(QByteArray &buff,
-                                    const uint32_t payload_size) {
-  int ret = tcpSocket->read(buff, payload_size);
-  if (ret < 0) {
-    disconnectOnError();
+      buff= ReceivedData;
+      ReceivedData.remove(0,payload_size);
+      ret = buff.size();
+    }
+    
+    return ret;
   }
-  return ret;
-}
 
-void IOExternalBus::disconnectOnError(const QString msg) {
+  void IOExternalBus::disconnectOnError(const QString msg) {
 
-  QMessageBox::information(nullptr, tr("Ripes VBus"),
-                           (msg.length() > 1) ? msg
-                                              : tcpSocket->getLastErrorStr());
+    emit SigClose();
 
-  tcpSocket->close();
-  updateConnectionStatus(false);
-  tcpSocket->abort();
-  m_regDescs.clear();
+    updateConnectionStatus(false);
+    m_regDescs.clear();
 
-  emit regMapChanged();
-  emit sizeChanged();
-}
+    emit regMapChanged();
+    emit sizeChanged();
+  }
 
 } // namespace Ripes
